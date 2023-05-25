@@ -1,9 +1,10 @@
+import os
 import numpy as np
 import torch
 from torch import nn
 from torch.nn.functional import one_hot
 from sklearn import metrics
-from pykt.config import que_type_models
+from pykt.config import que_type_models, special_models
 from ..datasets.lpkt_utils import generate_time2idx
 import pandas as pd
 
@@ -43,7 +44,7 @@ def save_cur_predict_result(dres, q, r, d, t, m, sm, p):
         results.append(str([qs, rs, ds, ts, ps, prelabels, auc, acc]))
     return "\n".join(results)
 
-def evaluate(model, test_loader, model_name, save_path=""):
+def evaluate(model, test_loader, model_name, rel, save_path=""):
     if save_path != "":
         fout = open(save_path, "w", encoding="utf8")
     with torch.no_grad():
@@ -63,11 +64,11 @@ def evaluate(model, test_loader, model_name, save_path=""):
                 qshft, cshft, rshft, sdshft,qdshft = dcur["shft_qseqs"], dcur["shft_cseqs"], dcur["shft_rseqs"], dcur["shft_sdseqs"],dcur["shft_qdseqs"]
                 sd, qd, sdshft, qdshft = sd.to(device), qd.to(device), sdshft.to(device), qdshft.to(device)
             else:
-                q, c, r = dcur["qseqs"], dcur["cseqs"], dcur["rseqs"] 
+                q, c, r, t = dcur["qseqs"], dcur["cseqs"], dcur["rseqs"], dcur["tseqs"] 
                 qshft, cshft, rshft= dcur["shft_qseqs"], dcur["shft_cseqs"], dcur["shft_rseqs"]
             m, sm = dcur["masks"], dcur["smasks"]
             q, c, r, qshft, cshft, rshft, m, sm = q.to(device), c.to(device), r.to(device), qshft.to(device), cshft.to(device), rshft.to(device), m.to(device), sm.to(device)
-            if model.model_name in que_type_models and model_name != "lpkt":
+            if model.model_name in que_type_models and model_name not in special_models:
                 model.model.eval()
             else:
                 model.eval()
@@ -86,6 +87,9 @@ def evaluate(model, test_loader, model_name, save_path=""):
                 '''
                 y = model(dcur)
                 y = (y * one_hot(cshft.long(), model.num_c)).sum(-1)
+            elif model_name in ["rkt", "rkt_paper"]:
+                y, attn = model(dcur, rel)
+                y = y[:,1:]
             elif model_name in ["bakt_time"]:
                 y = model(dcur, dgaps)
                 y = y[:,1:]
@@ -132,10 +136,11 @@ def evaluate(model, test_loader, model_name, save_path=""):
                 y = model(q.long(),c.long(),sd.long(),qd.long(),r.long(),qshft.long(),cshft.long(),sdshft.long(),qdshft.long())
             # print(f"after y: {y.shape}")
             # save predict result
+            '''
             if save_path != "":
                 result = save_cur_predict_result(dres, c, r, cshft, rshft, m, sm, y)
                 fout.write(result+"\n")
-
+            '''
             y = torch.masked_select(y, sm).detach().cpu()
             # print(f"pred_results:{y}")  
             t = torch.masked_select(rshft, sm).detach().cpu()
