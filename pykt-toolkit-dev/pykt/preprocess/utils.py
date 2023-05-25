@@ -142,29 +142,23 @@ def get_df_from_row(row):
     return df_value
 
 
+# pykt version (new)
 # phi coefficient
-def check_correctness(correct, i_idx, j_idx):
-    table = np.zeros([2,2], dtype=float)
-    if(correct[i_idx] == 1.0 and correct[j_idx] == 1.0):
-        table[1,1] += 1
-    elif(correct[i_idx] == 0.0 and correct[j_idx] == 0.0):
-        table[0,0] += 1
-    elif(correct[i_idx] == 0.0 and correct[j_idx] == 1.0):
-        table[1,0] += 1
-    elif(correct[i_idx] == 1.0 and correct[j_idx] == 0.0):
-        table[0,1] += 1
-    return table
-
-def cal_table(concept, correct, i, j):
-    table = np.zeros([2,2], dtype=float)
+def cal_table(table_dict, concept, correct, i, j):
+    if i not in table_dict:
+        table_dict[i] = {}
+        
     i_index_list = np.where(concept == i)[0]  # np.where()返回一个包含知识点i下标的元组
     for i_idx in i_index_list:
-        temp_c = concept[0 : i_idx-1]   
+        temp_c = concept[:i_idx]   
         if j in temp_c:
-            j_index_list = np.where(temp_c == j)[0] # 统计在知识点i之前出现过的知识点j
-            for j_idx in j_index_list:
-                table += check_correctness(correct, i_idx, j_idx) 
-    return table
+            if j not in table_dict[i]:
+                table_dict[i][j] = np.zeros([2,2], dtype=float)
+            table = table_dict[i][j]
+            j_index = np.where(temp_c == j)[0][-1]   # 统计在知识点i之前“最近”的知识点j
+            table[ correct[i_idx], correct[j_index] ] += 1.0
+            table_dict[i][j] = table
+        
 
 def compute_phi_corr(df, dpath):
     keys = df.columns
@@ -184,34 +178,40 @@ def compute_phi_corr(df, dpath):
     else:
         df_ = df.explode(['questions','concepts','responses'])
     print(df_)    
+    
     # phi calculate
     phi_dict = dict()
+    table_dict = dict()
     count=0
     
     for stu,stu_df in df_.groupby(['uid'], sort=False):
         #stu_df.sort_values(by=['timestamps'], ascending=True , inplace=True)
         count+=1
-        if 'questions' in keys:
-            concept = stu_df['questions'].values
-            qindex = stu_df['questions'].unique()
-        else:
-            concept = stu_df['concepts'].values
-            qindex = stu_df['concepts'].unique()
+        
+        question = np.array( [int(q) for q in stu_df['questions'].values] )
+        qu = np.array( [int(q) for q in stu_df['questions'].unique()] )
         #print(f"concept:{concept}")
         correct = [int(s) for s in stu_df['responses'].values]
         #print(f"response:{correct}")
         
-        
         print(f"No.{count} :stu_id:{stu} , question num:{len(stu_df)}")
-        combinations = list(itertools.product(qindex, qindex))
-        #print(concept)
+        combinations = list(itertools.product(qu, qu))
+        
         # 循环遍历所有知识点i j的组合
         for i,j in combinations:
-            table = cal_table(concept, correct, i, j)
-            #print(table)
+            cal_table(table_dict, question, correct, i, j)
+            
+    pd.to_pickle( table_dict, os.path.join(dpath, "table_dict.pkl") )
+    
+    # 计算全局phi    
+    for i in table_dict.keys():
+        if len(table_dict[i]) == 0:
+                continue
+        for j in table_dict[i].keys():
+            table = table_dict[i][j]
             row_sum = table.sum(axis=1)
             culumn_sum = table.sum(axis=0)
-            
+
             if 0.0 in row_sum or 0.0 in culumn_sum:
                 continue
             else:
@@ -220,11 +220,10 @@ def compute_phi_corr(df, dpath):
                 if phi == 0.0:
                     continue
                 if i not in phi_dict:
-                    phi_dict[int(i)] = {}
-                phi_dict[int(i)][int(j)] = phi
-        pd.to_pickle( phi_dict, os.path.join(dpath, "phi_dict.pkl") )        
-    #phi_matrix = np.array(phi_matrix)
-    #pro_pro_sparse = sparse.coo_matrix((phi_matrix[:, 2].astype(np.float32), (phi_matrix[:, 0], phi_matrix[:, 1])), shape=(num_q, num_q)).toarray()
-    #np.fill_diagonal(pro_pro_sparse, 1.0)
-    #np.save(os.path.join("./", 'pro_pro_sparse'), phi_matrix)
+                    phi_dict[i] = {}
+                phi_dict[i][j] = phi
+                
+    pd.to_pickle( phi_dict, os.path.join(dpath, "phi_dict.pkl") )        
+
+
     
